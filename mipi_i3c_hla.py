@@ -52,9 +52,11 @@ class MipiI3cHla(HighLevelAnalyzer):
     CCC transfers using the broadcast address 0x7E.
     """
 
-    show_ack = ChoicesSetting(choices=("show", "hide"))
+    show_ack = ChoicesSetting(choices=["show", "hide"])
+    display_mode = ChoicesSetting(choices=["timeline", "transaction"])
 
     result_types = {
+        "event": {"format": "{{data.text}}"},
         "private": {
             "format": "I3C {{data.dir}} {{data.addr}} {{data.payload}}{{data.ack_info}}"
         },
@@ -181,7 +183,92 @@ class MipiI3cHla(HighLevelAnalyzer):
             return None
         return value & 0xFF
 
-    def decode(self, frame: AnalyzerFrame):
+    def _ack_label(self, ack: bool) -> str:
+        return "ACK" if ack else "NACK"
+
+    @staticmethod
+    def _t_label(ack: bool) -> str:
+        return "T(0)" if ack else "T(1)"
+
+    @staticmethod
+    def _address_label(addr: int) -> str:
+        if addr == 0x7E:
+            return "Address 7E (Broadcast)"
+        return "Address {:02X}".format(addr)
+
+    @staticmethod
+    def _ccc_label(code: int) -> str:
+        raw_name = CCC_NAMES.get(code, "UNKNOWN_CCC")
+        base_name = raw_name.split(" (")[0]
+        prefix = "Direct" if (code & 0x80) else "Broadcast"
+        return "{} {} ({:02X})".format(prefix, base_name, code)
+
+    def _decode_timeline(self, frame: AnalyzerFrame):
+        if frame.type == "start":
+            text = "Sr" if self.active_address is not None else "S"
+            return AnalyzerFrame("event", frame.start_time, frame.end_time, {"text": text})
+
+        if frame.type == "address":
+            addr_value = self._coerce_uint(frame.data.get("address"))
+            if addr_value is None:
+                return AnalyzerFrame(
+                    "warning",
+                    frame.start_time,
+                    frame.end_time,
+                    {"message": "Unrecognized address format from lower analyzer."},
+                )
+
+            self.active_address = addr_value & 0x7F
+            self.is_read = bool(frame.data.get("read", False))
+            self.address_ack = bool(frame.data.get("ack", True))
+            self.expecting_ccc_code = self.active_address == 0x7E and not self.is_read
+            self.ccc_code = None
+
+            parts = [
+                self._address_label(self.active_address),
+                "RnW({})".format(1 if self.is_read else 0),
+            ]
+            if self.show_ack == "show":
+                parts.append(self._ack_label(self.address_ack))
+
+            return AnalyzerFrame(
+                "event",
+                frame.start_time,
+                frame.end_time,
+                {"text": " ".join(parts)},
+            )
+
+        if frame.type == "data":
+            value = self._extract_byte(frame)
+            if value is None:
+                return AnalyzerFrame(
+                    "warning",
+                    frame.start_time,
+                    frame.end_time,
+                    {"message": "Unrecognized data frame format from lower analyzer."},
+                )
+
+            ack = bool(frame.data.get("ack", True))
+            if self.active_address == 0x7E and self.expecting_ccc_code:
+                self.ccc_code = value
+                self.expecting_ccc_code = False
+                text = self._ccc_label(value)
+            else:
+                text = "{:02X}".format(value)
+
+            if self.show_ack == "show":
+                text = "{} {} {}".format(text, self._ack_label(ack), self._t_label(ack))
+
+            return AnalyzerFrame("event", frame.start_time, frame.end_time, {"text": text})
+
+        if frame.type == "stop":
+            out = AnalyzerFrame("event", frame.start_time, frame.end_time, {"text": "P"})
+            self._reset_transaction()
+            return out
+
+        return None
+
+    def _decode_transaction(self, frame: AnalyzerFrame):
         if frame.type == "start":
             if self.start_time is None:
                 self.start_time = frame.start_time
@@ -245,3 +332,8 @@ class MipiI3cHla(HighLevelAnalyzer):
             return self._emit_transaction(frame.end_time)
 
         return None
+
+    def decode(self, frame: AnalyzerFrame):
+        if self.display_mode == "timeline":
+            return self._decode_timeline(frame)
+        return self._decode_transaction(frame)

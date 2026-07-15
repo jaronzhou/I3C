@@ -34,6 +34,17 @@
 - Private 示例: `I3C W 0x2A [3B] 12 34 56 ACK:all`
 - CCC 示例: `Broadcast CCC 0x07 ENTDAA (Broadcast) [0B] ACK:all`
 
+支持 `display_mode` 设置：
+
+- `timeline`: 输出接近总线时序标注风格，示例：
+	- `Address 7E (Broadcast) RnW(0) ACK`
+	- `Direct GETDCR (8F) ACK T(0)`
+	- `Sr`
+	- `Address 09 RnW(1) ACK`
+	- `CD ACK T(0)`
+	- `P`
+- `transaction`: 输出聚合事务摘要（原有模式）
+
 当 `show_ack` 设为 `hide` 时，不输出 ACK 信息后缀。
 
 ## 6. 已知限制
