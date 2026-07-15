@@ -83,6 +83,33 @@ class MipiI3cHla(HighLevelAnalyzer):
             return "[0B]"
         return "[{}B] {}".format(len(data), " ".join("{:02X}".format(b) for b in data))
 
+    @staticmethod
+    def _coerce_uint(raw) -> Optional[int]:
+        if raw is None:
+            return None
+
+        if isinstance(raw, bool):
+            return int(raw)
+
+        if isinstance(raw, int):
+            return raw
+
+        if isinstance(raw, bytes):
+            if len(raw) == 0:
+                return None
+            return int.from_bytes(raw, byteorder="big", signed=False)
+
+        if isinstance(raw, str):
+            text = raw.strip()
+            if text == "":
+                return None
+            try:
+                return int(text, 0)
+            except ValueError:
+                return None
+
+        return None
+
     def _ack_suffix(self) -> str:
         if self.show_ack != "show":
             return ""
@@ -149,19 +176,10 @@ class MipiI3cHla(HighLevelAnalyzer):
         return frame
 
     def _extract_byte(self, frame: AnalyzerFrame) -> Optional[int]:
-        raw = frame.data.get("data")
-        if raw is None:
+        value = self._coerce_uint(frame.data.get("data"))
+        if value is None:
             return None
-
-        if isinstance(raw, bytes):
-            if not raw:
-                return None
-            return int(raw[0])
-
-        if isinstance(raw, int):
-            return raw & 0xFF
-
-        return None
+        return value & 0xFF
 
     def decode(self, frame: AnalyzerFrame):
         if frame.type == "start":
@@ -172,9 +190,18 @@ class MipiI3cHla(HighLevelAnalyzer):
         if frame.type == "address":
             # Repeated START without STOP: close previous transfer first.
             pending = self._emit_transaction(frame.start_time)
+            addr_value = self._coerce_uint(frame.data.get("address"))
+            if addr_value is None:
+                return AnalyzerFrame(
+                    "warning",
+                    frame.start_time,
+                    frame.end_time,
+                    {"message": "Unrecognized address format from lower analyzer."},
+                )
+
             if pending is not None:
                 self.start_time = frame.start_time
-                self.active_address = int(frame.data.get("address", 0))
+                self.active_address = addr_value & 0x7F
                 self.is_read = bool(frame.data.get("read", False))
                 self.address_ack = bool(frame.data.get("ack", True))
                 self.expecting_ccc_code = self.active_address == 0x7E and not self.is_read
@@ -184,7 +211,7 @@ class MipiI3cHla(HighLevelAnalyzer):
             if self.start_time is None:
                 self.start_time = frame.start_time
 
-            self.active_address = int(frame.data.get("address", 0))
+            self.active_address = addr_value & 0x7F
             self.is_read = bool(frame.data.get("read", False))
             self.address_ack = bool(frame.data.get("ack", True))
             self.data_bytes = []
