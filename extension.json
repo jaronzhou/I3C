@@ -1,0 +1,13 @@
+{
+  "name": "MIPI I3C Analyzer",
+  "apiVersion": "1.0.0",
+  "author": "shy coder",
+  "version": "0.1.0",
+  "description": "High Level Analyzer for MIPI I3C SDR traffic (stacked on I2C analyzer frames).",
+  "extensions": {
+    "MIPI I3C Analyzer": {
+      "type": "HighLevelAnalyzer",
+      "entryPoint": "mipi_i3c_hla.MipiI3cHla"
+    }
+  }
+}
